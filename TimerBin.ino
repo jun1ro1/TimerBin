@@ -1,5 +1,6 @@
 #include <Arduino.h>
 
+
 #include <Wire.h>
 #include <Time.h>
 #include <ST7032.h>
@@ -32,52 +33,52 @@ static time_t sUpsideDownTime = 0;
 const char* eventToString( const event_t event ) {
     static const char* str[] = {
         "eventIdle",
-        "singleTapped",
-        "doubleTapped",
-        "tiltLeft",
-        "tiltRight",
-        "standLeft",
-        "stnandRight",
-        "tiltBack",
-        "tiltFront",
-        "timedOut",
-        "evnetUpsideDown",
+        "eventSingleTapped",
+        "eventDoubleTapped",
+        "eventTiltLeft",
+        "eventTiltRight",
+        "eventStandLeft",
+        "eventStandRight",
+        "eventTiltBack",
+        "eventTiltFront",
+        "eventTimedOut",
+        "eventUpsideDown",
     };
-    return ( (int)event < sizeof(str) ) ? str[ (int)event ] : NULL;
+    return ( (int)event < (int)eventEnd ) ? str[ (int)event ] : NULL;
 }
 
 const char* actionToString( const action_t action ) {
     static const char* str[] = {
         "actionIdle",
-        "forward",
-        "forwardFast",
-        "backward",
-        "backwardFast",
-        "selectNext",
-        "selectPrev",
-        "toAdjusting",
-        "toClock",
-        "CancelAdjusting",
-        "ToSleep",
-        "actionUpsideDown",
-        "actionDisplayOpend",
+        "actionForward",
+        "actionForwardFast",
+        "actionBackward",
+        "actionBackwardFast",
+        "actionSelectNext",
+        "actionSelectPrev",
+        "actionToAdjusting",
+        "actionToClock",
+        "actionCancelAdjusting",
+        "actionToSleep",
+        "actionToElapsed",
+        "actionRecord",
+        "actionToRecorded",
     };
-    return ( (int)action < sizeof(str) ) ? str[ (int)action ] : NULL;
+    return ( (int)action < (int)actionEnd ) ? str[ (int)action ] : NULL;
 }
 
 const char* stateToString( const state_t state ) {
     static const char* str[] = {
         "stateIdle",
+        "stateElapsed",
+        "stateRecorded",
         "stateClock",
         "stateAdjusting",
-        "stateSleep",
-        "stateUpsideDown",
-        "actionDisplayOpend",
     };
-    return ( (int)state < sizeof(str) ) ? str[ (int)state ] : NULL;
+    return ( (int)state < (int)stateEnd ) ? str[ (int)state ] : NULL;
 }
 
-event_t getEvent( void ) {
+event_t getEvent( state_t state ) {
     static event_t prevEvent = eventIdle;
     
     // Get a sensor event
@@ -97,12 +98,12 @@ event_t getEvent( void ) {
     else if ((reg & 0x40) != 0) {
         event = eventSingleTapped;
     }
-    else if (sensorEvent.acceleration.z < -7.0) {
+    else if (sensorEvent.acceleration.z < -1.0) {
         Serial.print("accel.z = ");
         Serial.print(sensorEvent.acceleration.z, 2);
         Serial.print( " " );
 
-        if (sTimer -> elapsed() > 2 * 1000) {
+        if (prevEvent != eventUpsideDown) {
             event = eventUpsideDown;
         }
     }
@@ -124,11 +125,8 @@ event_t getEvent( void ) {
     else if (sensorEvent.acceleration.x > +7.0) {
         event = eventTiltFront;
     }
-    else if (sTimer->elapsed() > 30 * 1000) {
+    else if (state != stateIdle && sTimer->elapsed() > 30 * 1000) {
         event = eventTimedOut;
-    }
-    else {
-        event = eventIdle;
     }
     
     prevEvent = event;
@@ -140,27 +138,30 @@ action_t selectAction( const event_t event, const state_t state ) {
     
     // make an action from the event
     switch (state) {
-        case stateSleep:
-            switch (event) {
-                case eventSingleTapped:
-                    action = actionDisplayOpend;
-                    break;
-                case eventUpsideDown:
-                    action = actionUpsideDown;
-                    break;
-            }
-            break;
         case stateIdle:
             switch (event) {
                 case eventSingleTapped:
-                    action = actionDisplayOpend;
+                    action = actionToElapsed;
                     break;
                 case eventUpsideDown:
-                    action = actionUpsideDown;
+                    action = actionRecord;
                     break;
             }
             break;
-        case stateUpsideDown:
+        case stateElapsed:
+            switch (event) {
+                case eventSingleTapped:
+                    action = actionToRecorded;
+                    break;
+                case eventTimedOut:
+                    action = actionToSleep;
+                    break;
+                case eventUpsideDown:
+                    action = actionRecord;
+                    break;
+            }
+            break;
+        case stateRecorded:
             switch (event) {
                 case eventSingleTapped:
                     action = actionToClock;
@@ -168,22 +169,24 @@ action_t selectAction( const event_t event, const state_t state ) {
                 case eventTimedOut:
                     action = actionToSleep;
                     break;
-                default:
-                    action = actionDisplayOpend;
+                case eventUpsideDown:
+                    action = actionRecord;
                     break;
             }
             break;
         case stateClock:
             switch (event) {
+                case eventSingleTapped:
+                    action = actionToSleep;
+                    break;
+               case eventTimedOut:
+                    action = actionToSleep;
+                    break;
                 case eventDoubleTapped:
                     action = actionToAdjusting;
                     break;
-                case eventSingleTapped:
-                case eventTimedOut:
-                    action = actionToSleep;
-                    break;
                 case eventUpsideDown:
-                    action = actionUpsideDown;
+                    action = actionRecord;
                     break;
             }
             break;
@@ -212,9 +215,6 @@ action_t selectAction( const event_t event, const state_t state ) {
                     break;
                 case eventTimedOut:
                     action = actionCancelAdjusting;
-                    break;
-                default:
-                    action = actionIdle;
                     break;
             }
             break;
@@ -275,14 +275,19 @@ state_t doAction( const action_t action, const state_t state, tmElements_t &tm )
             nextState = stateClock;
             break;
         case actionToSleep:
-            nextState = stateSleep;
+            sTimer -> stop();
+            displayOff();
+            nextState = stateIdle;
             break;
-        case actionUpsideDown:
+        case actionToElapsed:
+            nextState = stateElapsed;
+            break;
+        case actionRecord:
             sUpsideDownTime = now();
-            nextState = stateUpsideDown;
+            nextState = stateRecorded;
             break;
-        case actionDisplayOpend:
-            nextState = stateUpsideDown;
+        case actionToRecorded:
+            nextState = stateRecorded;
             break;
         default:
             break;
@@ -312,15 +317,10 @@ void displayClock( const tmElements_t &tm ) {
     lcd.setCursor(0,0);
     lcd.print(s);
     
-//    Serial.print( s   );
-//    Serial.print( " " );
-    
     // display hour, minute, second on LCD
     sprintf( s, "%02d:%02d:%02d", tm.Hour, tm.Minute , tm.Second );
     lcd.setCursor(0,1);
     lcd.print(s);
-    
-//    Serial.println( s );
 }
 
 void displayAdjusting( const action_t action ) {
@@ -381,7 +381,7 @@ void displayAdjusting( const action_t action ) {
     }
     
     // display the value and blink the cursor
-    char s[16];
+    char s[4];
     int value = _crown->getValue();
     sprintf(s, "%02d", value);
     lcd.display();
@@ -391,7 +391,44 @@ void displayAdjusting( const action_t action ) {
     lcd.blink();
 }
 
-void displayUpsideDown( const time_t time ) {
+void displayRoundedTime( const time_t time ) {
+    byte val = 0;
+    tmByteFields field = J1ClockKit::roundTime( time, val );
+    char s[10] = "ERROR";
+    
+    switch (field) {
+        case tmSecond:  // Second
+            sprintf(s, "%2d secs" , val );
+            break;
+        case tmMinute:  // minute
+            sprintf(s, "%2d mins" , val );
+            break;
+        case tmHour:    // hour
+            sprintf(s, "%2d hours", val );
+            break;
+        case tmDay:     // day
+            sprintf(s, "%2d days" , val );
+            break;
+        case tmMonth:   // month
+            sprintf(s, "%2d mons" , val );
+            break;
+        case tmYear:    // year
+            sprintf(s, "%2d years", val );
+            break;
+    }
+
+    lcd.display();
+    lcd.noBlink();
+    lcd.clear();
+    
+    lcd.setCursor(0,0);
+    lcd.print(s);
+    
+    lcd.setCursor(0,1);
+    lcd.print(" ago");
+}
+
+void displayRecorded( const time_t time ) {
     tmElements_t tm;
     breakTime( time, tm );
     
@@ -400,20 +437,15 @@ void displayUpsideDown( const time_t time ) {
     lcd.clear();
 
     lcd.setCursor(0,0);
-    lcd.print("Opend at");
+    lcd.print("opend at");
 
     char s[16];
     sprintf( s, "%02d:%02d:%02d", tm.Hour, tm.Minute , tm.Second );
     lcd.setCursor(0,1);
     lcd.print(s);
-    
-    Serial.print( "Upside Down = " );
-    Serial.println( s );
 }
 
 void displayOff( void ) {
-    lcd.clear();
-    delay(5);
     lcd.noDisplay();
 }
 
@@ -421,15 +453,14 @@ void displayOff( void ) {
 
 void setup() {
     Serial.begin(9600);
-    Serial.println(F("Hello World!"));
     
     lcd.begin(8,2);
     lcd.setContrast(30);
     lcd.display();
     lcd.setCursor(0,0);
-    lcd.print("Hello");
-    lcd.setCursor(2,1);
-    lcd.print("World!");
+    lcd.print("TimerBin");
+    lcd.setCursor(0,1);
+    lcd.print("    0.01");
     
     delay(1000);
     lcd.clear();
@@ -504,7 +535,7 @@ void loop() {
     Serial.print( " " );
 
     // Get an event
-    event_t event = getEvent();
+    event_t event = getEvent( _state );
     Serial.print( eventToString( event ) );
     Serial.print( " " );
     
@@ -519,17 +550,19 @@ void loop() {
     
     // display
     switch (_state) {
+        case stateIdle:
+            break;
+        case stateElapsed:
+            displayRoundedTime( sUpsideDownTime == 0 ? 0 : now() - sUpsideDownTime );
+            break;
+        case stateRecorded:
+            displayRecorded( sUpsideDownTime );
+            break;
         case stateClock:
             displayClock( timeElements );
             break;
         case stateAdjusting:
             displayAdjusting( action );
-            break;
-        case stateUpsideDown:
-            displayUpsideDown( sUpsideDownTime );
-            break;
-        case stateSleep:
-            displayOff();
             break;
     }
     delay(500);

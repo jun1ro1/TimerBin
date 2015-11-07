@@ -40,7 +40,6 @@ namespace J1ClockKit {
         int           maxval;
         int           value;
 
-    private:
         void prepare();
         void cleanup();
     };
@@ -50,15 +49,15 @@ namespace J1ClockKit {
         ElapsedTimer();
 
         void start( const int origin = 0 );
+        void stop ( void );
         unsigned long elapsed();
 
     protected:
         unsigned long _origin;
     };
-
-    static ElapsedTimer* start( ElapsedTimer* timer );
-    static ElapsedTimer* kill ( ElapsedTimer* timer );
-
+    
+    tmByteFields roundTime( const time_t time, byte &val );
+    
 } // namespace
 
 #endif /* J1ClockKit_h */

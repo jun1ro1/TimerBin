@@ -22,6 +22,7 @@ typedef enum {
     eventTiltFront,
     eventTimedOut,
     eventUpsideDown,
+    eventEnd,
 } event_t;
 
 typedef enum {
@@ -36,16 +37,19 @@ typedef enum {
     actionToClock,
     actionCancelAdjusting,
     actionToSleep,
-    actionUpsideDown,
-    actionDisplayOpend,
+    actionToElapsed,
+    actionRecord,
+    actionToRecorded,
+    actionEnd,
 } action_t;
 
 typedef enum {
     stateIdle,
+    stateElapsed,
+    stateRecorded,
     stateClock,
     stateAdjusting,
-    stateSleep,
-    stateUpsideDown,
+    stateEnd,
 } state_t;
 
 #endif /* typedef_h */
